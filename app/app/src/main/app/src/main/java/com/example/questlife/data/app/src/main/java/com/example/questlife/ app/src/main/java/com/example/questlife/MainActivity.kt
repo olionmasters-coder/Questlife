@@ -1,3 +1,4 @@
+
 package com.example.questlife
 
 import android.app.Application
@@ -12,19 +13,13 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.ViewModelProvider
-import androidx.lifecycle.viewmodel.compose.viewModel
-import com.example.questlife.ui.CharacterScreen
-import com.example.questlife.ui.FinanceScreen
-import com.example.questlife.ui.HabitsScreen
-import com.example.questlife.ui.ShopScreen
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -35,7 +30,7 @@ class App : Application() {
     val database by lazy { com.example.questlife.data.AppDatabase.get(this) }
 
     override fun onCreate() {
-        // «Чёрный ящик» включаем В САМОМ НАЧАЛЕ запуска приложения
+        // «Чёрный ящик» — включается раньше всего
         val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, error ->
             try {
@@ -52,7 +47,6 @@ class App : Application() {
     }
 }
 
-// Журнал шагов: помогает понять, докуда дошёл запуск
 fun logStep(context: Context, text: String) {
     try {
         val time = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
@@ -66,19 +60,9 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         logStep(this, "3. Открыт экран MainActivity")
         super.onCreate(savedInstanceState)
-        logStep(this, "4. Система готова, начинаем строить приложение")
+        logStep(this, "4. super.onCreate() выполнен")
 
-        // Пытаемся создать «мозг» приложения; любую ошибку запоминаем
-        var startupError: String? = null
-        val vm: AppViewModel? = try {
-            ViewModelProvider(this)[AppViewModel::class.java]
-        } catch (t: Throwable) {
-            startupError = Log.getStackTraceString(t)
-            null
-        }
-        logStep(this, if (vm != null) "5. Мозг приложения создан успешно" else "5. ОШИБКА при создании мозга")
-
-        // Если приложение уже падало — читаем сохранённый отчёт
+        // Читаем прошлый отчёт, если он был
         val oldReport = try {
             val f = File(filesDir, "crash.txt")
             if (f.exists()) f.readText() else null
@@ -86,19 +70,37 @@ class MainActivity : ComponentActivity() {
             null
         }
 
-        val report = startupError ?: oldReport
-        logStep(this, "6. Готовимся показать интерфейс")
+        // Номер версии — чтобы убедиться, что стоит свежая сборка
+        val version = try {
+            packageManager.getPackageInfo(packageName, 0).versionName ?: "?"
+        } catch (_: Exception) {
+            "?"
+        }
 
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
-                var dismissed by remember { mutableStateOf(false) }
-                when {
-                    report != null && !dismissed -> CrashReportScreen(report, this@MainActivity) {
+                if (oldReport != null) {
+                    CrashReportScreen(oldReport, this@MainActivity) {
                         try { File(filesDir, "crash.txt").delete() } catch (_: Exception) {}
                         recreate()
                     }
-                    vm != null -> AppRoot(vm)
-                    else -> Text("Ошибка запуска приложения", Modifier.padding(16.dp))
+                } else {
+                    Surface(Modifier.fillMaxSize()) {
+                        Column(
+                            Modifier
+                                .fillMaxSize()
+                                .padding(24.dp),
+                            verticalArrangement = Arrangement.Center,
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text("ТЕСТ $version", fontSize = 34.sp)
+                            Spacer(Modifier.height(12.dp))
+                            Text(
+                                "Если ты видишь этот текст — значит запуск приложения работает.",
+                                fontSize = 15.sp
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -123,7 +125,7 @@ fun CrashReportScreen(report: String, context: Context, onDismiss: () -> Unit) {
         Text("⚠️ Отчёт об ошибке", fontSize = 22.sp)
         Spacer(Modifier.height(8.dp))
         Text(
-            "Нажми «📋 Скопировать» и пришли мне весь текст (или пришли скриншот этого экрана).",
+            "Нажми «📋 Скопировать» и пришли мне весь текст (или пришли скриншот).",
             fontSize = 14.sp
         )
         Spacer(Modifier.height(8.dp))
@@ -150,42 +152,6 @@ fun CrashReportScreen(report: String, context: Context, onDismiss: () -> Unit) {
             }
             OutlinedButton(onClick = onDismiss) {
                 Text("Закрыть и запустить заново")
-            }
-        }
-    }
-}
-
-@Composable
-fun AppRoot(vm: AppViewModel = viewModel()) {
-    var tab by rememberSaveable { mutableIntStateOf(0) }
-    val snackbar = remember { SnackbarHostState() }
-
-    LaunchedEffect(Unit) {
-        vm.message.collect { snackbar.showSnackbar(it) }
-    }
-
-    Scaffold(
-        snackbarHost = { SnackbarHost(snackbar) },
-        bottomBar = {
-            NavigationBar {
-                listOf("🧙" to "Персонаж", "✅" to "Привычки", "💰" to "Финансы", "🛒" to "Лавка")
-                    .forEachIndexed { i, (icon, label) ->
-                        NavigationBarItem(
-                            selected = tab == i,
-                            onClick = { tab = i },
-                            icon = { Text(icon) },
-                            label = { Text(label) }
-                        )
-                    }
-            }
-        }
-    ) { pad ->
-        Box(Modifier.padding(pad)) {
-            when (tab) {
-                0 -> CharacterScreen(vm)
-                1 -> HabitsScreen(vm)
-                2 -> FinanceScreen(vm)
-                else -> ShopScreen(vm)
             }
         }
     }
