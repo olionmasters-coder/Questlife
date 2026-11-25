@@ -1,7 +1,7 @@
-
 package com.example.questlife
 
 import android.app.Application
+import android.content.Context
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
@@ -26,29 +26,49 @@ import com.example.questlife.ui.FinanceScreen
 import com.example.questlife.ui.HabitsScreen
 import com.example.questlife.ui.ShopScreen
 import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class App : Application() {
+
     val database by lazy { com.example.questlife.data.AppDatabase.get(this) }
+
+    override fun onCreate() {
+        // «Чёрный ящик» включаем В САМОМ НАЧАЛЕ запуска приложения
+        val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, error ->
+            try {
+                val text = "Поток: " + thread.name + "\n\n" + Log.getStackTraceString(error)
+                File(filesDir, "crash.txt").writeText(text)
+                logStep(this, "!!! ПАДЕНИЕ: " + error.javaClass.name)
+            } catch (_: Exception) {
+            }
+            defaultHandler?.uncaughtException(thread, error)
+        }
+        logStep(this, "1. Приложение начинает запускаться")
+        super.onCreate()
+        logStep(this, "2. Application готово")
+    }
+}
+
+// Журнал шагов: помогает понять, докуда дошёл запуск
+fun logStep(context: Context, text: String) {
+    try {
+        val time = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
+        File(context.filesDir, "steps.txt").appendText("[$time] $text\n")
+    } catch (_: Exception) {
+    }
 }
 
 class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        logStep(this, "3. Открыт экран MainActivity")
         super.onCreate(savedInstanceState)
+        logStep(this, "4. Система готова, начинаем строить приложение")
 
-        // «Чёрный ящик»: если приложение падает — сохраняем текст ошибки в файл
-        val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
-        Thread.setDefaultUncaughtExceptionHandler { thread, error ->
-            try {
-                File(filesDir, "crash.txt").writeText(
-                    "Поток: " + thread.name + "\n\n" + Log.getStackTraceString(error)
-                )
-            } catch (_: Exception) {
-            }
-            defaultHandler?.uncaughtException(thread, error)
-        }
-
-        // 1. Пытаемся создать «мозг» приложения. Если падает — запоминаем ошибку.
+        // Пытаемся создать «мозг» приложения; любую ошибку запоминаем
         var startupError: String? = null
         val vm: AppViewModel? = try {
             ViewModelProvider(this)[AppViewModel::class.java]
@@ -56,8 +76,9 @@ class MainActivity : ComponentActivity() {
             startupError = Log.getStackTraceString(t)
             null
         }
+        logStep(this, if (vm != null) "5. Мозг приложения создан успешно" else "5. ОШИБКА при создании мозга")
 
-        // 2. Если приложение уже падало раньше — читаем сохранённый отчёт.
+        // Если приложение уже падало — читаем сохранённый отчёт
         val oldReport = try {
             val f = File(filesDir, "crash.txt")
             if (f.exists()) f.readText() else null
@@ -66,13 +87,13 @@ class MainActivity : ComponentActivity() {
         }
 
         val report = startupError ?: oldReport
+        logStep(this, "6. Готовимся показать интерфейс")
 
-        // 3. Показываем либо отчёт об ошибке, либо само приложение.
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
                 var dismissed by remember { mutableStateOf(false) }
                 when {
-                    report != null && !dismissed -> CrashReportScreen(report) {
+                    report != null && !dismissed -> CrashReportScreen(report, this@MainActivity) {
                         try { File(filesDir, "crash.txt").delete() } catch (_: Exception) {}
                         recreate()
                     }
@@ -85,8 +106,15 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun CrashReportScreen(report: String, onDismiss: () -> Unit) {
+fun CrashReportScreen(report: String, context: Context, onDismiss: () -> Unit) {
     val clipboard = LocalClipboardManager.current
+    val steps = try {
+        val f = File(context.filesDir, "steps.txt")
+        if (f.exists()) f.readText() else "(журнал пуст)"
+    } catch (_: Exception) {
+        "(журнал недоступен)"
+    }
+
     Column(
         Modifier
             .fillMaxSize()
@@ -95,28 +123,33 @@ fun CrashReportScreen(report: String, onDismiss: () -> Unit) {
         Text("⚠️ Отчёт об ошибке", fontSize = 22.sp)
         Spacer(Modifier.height(8.dp))
         Text(
-            "Приложение не смогло запуститься. Нажми «Скопировать» и пришли мне этот текст (или пришли скриншот).",
+            "Нажми «📋 Скопировать» и пришли мне весь текст (или пришли скриншот этого экрана).",
             fontSize = 14.sp
         )
         Spacer(Modifier.height(8.dp))
-        SelectionContainer {
-            Text(
-                report,
-                fontSize = 11.sp,
-                fontFamily = FontFamily.Monospace,
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState())
-            )
+        SelectionContainer(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+        ) {
+            Column {
+                Text("=== ЖУРНАЛ ЗАПУСКА ===", fontSize = 12.sp, fontFamily = FontFamily.Monospace)
+                Text(steps, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+                Spacer(Modifier.height(8.dp))
+                Text("=== ТЕКСТ ОШИБКИ ===", fontSize = 12.sp, fontFamily = FontFamily.Monospace)
+                Text(report, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+            }
         }
         Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = { clipboard.setText(AnnotatedString(report)) }) {
+            Button(onClick = {
+                clipboard.setText(AnnotatedString("=== ЖУРНАЛ ===\n$steps\n\n=== ОШИБКА ===\n$report"))
+            }) {
                 Text("📋 Скопировать")
             }
             OutlinedButton(onClick = onDismiss) {
-                Text("Закрыть отчёт")
+                Text("Закрыть и запустить заново")
             }
         }
     }
