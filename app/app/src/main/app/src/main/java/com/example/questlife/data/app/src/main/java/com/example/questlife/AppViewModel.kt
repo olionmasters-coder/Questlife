@@ -10,7 +10,7 @@ import kotlinx.coroutines.launch
 import java.time.LocalDate
 
 class AppViewModel(app: Application) : AndroidViewModel(app) {
-    private val db = (app as App).database
+    private val db = AppDatabase.get(app)
 
     private val start = SharingStarted.WhileSubscribed(5_000)
 
